@@ -1,0 +1,28 @@
+@startuml use_case
+left to right direction
+skinparam packageStyle rectangle
+
+actor "Пассажир" as Passenger
+actor "Оператор" as Operator
+
+rectangle "Симулятор лифтов" {
+  usecase "Вызвать лифт вверх" as UC1
+  usecase "Вызвать лифт вниз" as UC2
+  usecase "Выбрать этаж в кабине" as UC3
+  usecase "Просмотреть статус лифтов" as UC4
+  usecase "Запустить демо-режим" as UC5
+  usecase "Диспетчеризовать вызовы" as UC6
+  usecase "Перемещать лифт" as UC7
+}
+
+Passenger --> UC1
+Passenger --> UC2
+Passenger --> UC3
+Operator --> UC4
+Operator --> UC5
+UC1 ..> UC6 : include
+UC2 ..> UC6 : include
+UC3 ..> UC6 : include
+UC6 ..> UC7 : include
+UC5 ..> UC6 : include
+@enduml

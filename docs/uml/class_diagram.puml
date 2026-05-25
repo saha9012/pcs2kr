@@ -1,0 +1,74 @@
+@startuml class_diagram
+skinparam classAttributeIconSize 0
+
+class Simulator {
+  - building_: Building
+  - dispatcher_: Dispatcher
+  - loop_thread_: thread
+  + start()
+  + stop()
+  + run_interactive()
+  + run_demo(seconds: int)
+}
+
+class Building {
+  - floor_count_: int
+  - elevators_: vector<Elevator>
+  - pending_calls_: queue<CallRequest>
+  + submit_call(call: CallRequest)
+  + pop_next_call(out: CallRequest): bool
+  + assign_call_to_elevator(call, id)
+  + elevator_by_id(id): Elevator*
+  + start_elevators()
+  + stop_elevators()
+}
+
+class Elevator {
+  - id_: int
+  - current_floor_: atomic<int>
+  - destinations_: set<int>
+  - direction_: Direction
+  - worker_: thread
+  + start()
+  + stop()
+  + add_destination(floor: int)
+  + assign_hall_call(call: CallRequest)
+  + current_floor(): int
+  + direction(): Direction
+}
+
+class Dispatcher {
+  - building_: Building&
+  + dispatch_pending()
+  - select_elevator(call): int
+  - score_elevator(e, call): int
+}
+
+class CallRequest {
+  + floor: int
+  + type: CallType
+  + assigned_elevator: int
+}
+
+enum Direction {
+  Idle
+  Up
+  Down
+}
+
+enum CallType {
+  HallUp
+  HallDown
+  Cabin
+}
+
+Simulator *-- Building
+Simulator *-- Dispatcher
+Building "1" *-- "M" Elevator
+Building o-- CallRequest
+Dispatcher --> Building
+Dispatcher ..> Elevator
+Elevator --> Building : on_elevator_arrived
+CallRequest --> CallType
+Elevator --> Direction
+@enduml

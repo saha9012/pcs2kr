@@ -1,0 +1,31 @@
+@startuml sequence_hall_call
+actor "Пассажир" as User
+participant Simulator
+participant Building
+participant Dispatcher
+participant Elevator
+
+User -> Simulator: u 5
+Simulator -> Building: submit_call(HallUp, floor=5)
+activate Building
+deactivate Building
+
+... фоновый поток ...
+
+Dispatcher -> Building: pop_next_call()
+Building --> Dispatcher: CallRequest
+Dispatcher -> Dispatcher: select_elevator()
+Dispatcher -> Building: assign_call_to_elevator(call, id)
+Building -> Elevator: assign_hall_call(call)
+activate Elevator
+
+loop пока current != 5
+  Elevator -> Elevator: move_one_floor()
+end
+
+Elevator -> Elevator: open_doors()
+Elevator -> Building: on_elevator_arrived(id, 5)
+deactivate Elevator
+
+Simulator -> User: print_state()
+@enduml
