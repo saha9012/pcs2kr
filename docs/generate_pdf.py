@@ -1,225 +1,264 @@
 #!/usr/bin/env python3
-"""Generate SRS PDF for elevator simulator project."""
+"""Генерация docs/SRS.pdf из docs/SRS.md (содержимое совпадает с Markdown)."""
 
+from __future__ import annotations
+
+import re
 from pathlib import Path
 
 from fpdf import FPDF
 
 ROOT = Path(__file__).resolve().parent
+SRS_MD = ROOT / "SRS.md"
 OUTPUT = ROOT / "SRS.pdf"
 
-# Replace before submission
-STUDENT_NAME = "ФИО студента"
-STUDENT_GROUP = "___"
+STUDENT_NAME = "Недосекин Александр Сергеевич"
+STUDENT_GROUP = "ЭФБО 15-24"
+
+FONT_REGULAR = Path(r"C:\Windows\Fonts\arial.ttf")
+FONT_BOLD = Path(r"C:\Windows\Fonts\arialbd.ttf")
+FONT_MONO = Path(r"C:\Windows\Fonts\consola.ttf")
 
 
-class SRSReport(FPDF):
-    def footer(self):
-        self.set_y(-15)
+def strip_md_inline(text: str) -> str:
+    text = re.sub(r"\*\*(.+?)\*\*", r"\1", text)
+    text = re.sub(r"`(.+?)`", r"\1", text)
+    text = text.replace("≥", ">=").replace("–", "-").replace("«", '"').replace("»", '"')
+    return text.strip()
+
+
+def parse_frontmatter(lines: list[str]) -> tuple[dict[str, str], list[str]]:
+    if not lines or lines[0].strip() != "---":
+        return {}, lines
+    meta: dict[str, str] = {}
+    body_start = 0
+    for i in range(1, len(lines)):
+        if lines[i].strip() == "---":
+            body_start = i + 1
+            break
+        if ":" in lines[i]:
+            key, val = lines[i].split(":", 1)
+            meta[key.strip()] = val.strip().strip('"')
+    return meta, lines[body_start:]
+
+
+def parse_table_row(line: str) -> list[str]:
+    parts = [p.strip() for p in line.strip().strip("|").split("|")]
+    return [strip_md_inline(p) for p in parts]
+
+
+def is_table_separator(line: str) -> bool:
+    return bool(re.match(r"^\|[\s\-:|]+\|$", line.strip()))
+
+
+class SRSPdf(FPDF):
+    def __init__(self) -> None:
+        super().__init__()
+        self.set_auto_page_break(auto=True, margin=18)
+        self.set_margins(20, 18, 20)
+        if not FONT_REGULAR.exists():
+            raise FileNotFoundError("Не найден Arial (C:\\Windows\\Fonts\\arial.ttf)")
+        self.add_font("Arial", "", str(FONT_REGULAR))
+        self.add_font("Arial", "B", str(FONT_BOLD))
+        if FONT_MONO.exists():
+            self.add_font("Mono", "", str(FONT_MONO))
+
+    @property
+    def content_width(self) -> float:
+        return self.w - self.l_margin - self.r_margin
+
+    def footer(self) -> None:
+        self.set_y(-14)
         self.set_font("Arial", size=9)
-        self.cell(0, 10, f"Страница {self.page_no()}", align="C")
+        self.cell(0, 8, f"Страница {self.page_no()}", align="C")
+
+    def title_page(self, title: str, subtitle: str) -> None:
+        self.add_page()
+        self.ln(45)
+        self.set_font("Arial", "B", 17)
+        self.multi_cell(self.content_width, 9, title, align="C")
+        self.ln(10)
+        self.set_font("Arial", "B", 15)
+        self.multi_cell(self.content_width, 9, subtitle, align="C")
+        self.ln(25)
+        self.set_font("Arial", size=12)
+        for line in (
+            f"Студент: {STUDENT_NAME}",
+            f"Группа: {STUDENT_GROUP}",
+            "Дисциплина: Программирование корпоративных систем",
+            "2025–2026 уч. г.",
+        ):
+            self.cell(0, 8, line, align="C", new_x="LMARGIN", new_y="NEXT")
+
+    def heading(self, text: str, level: int) -> None:
+        sizes = {1: 15, 2: 13, 3: 11}
+        self.ln(4 if level > 1 else 6)
+        self.set_font("Arial", "B", sizes.get(level, 11))
+        self.multi_cell(self.content_width, 7, strip_md_inline(text))
+        self.ln(2)
+
+    def paragraph(self, text: str) -> None:
+        if not text.strip():
+            return
+        self.set_font("Arial", size=11)
+        self.multi_cell(self.content_width, 6, strip_md_inline(text))
+        self.ln(2)
+
+    def bullet(self, text: str) -> None:
+        self.set_font("Arial", size=11)
+        self.multi_cell(self.content_width, 6, f"  •  {strip_md_inline(text)}")
+        self.ln(1)
+
+    def code_block(self, lines: list[str], caption: str | None = None) -> None:
+        if caption:
+            self.set_font("Arial", "B", 10)
+            self.multi_cell(self.content_width, 5, caption)
+            self.ln(1)
+        font = "Mono" if "Mono" in self.fonts else "Arial"
+        self.set_font(font, size=8)
+        self.set_fill_color(245, 245, 245)
+        for line in lines:
+            safe = line.replace("\t", "    ")
+            self.multi_cell(self.content_width, 4.5, safe, fill=True)
+        self.ln(3)
+
+    def table(self, headers: list[str], rows: list[list[str]]) -> None:
+        if not headers:
+            return
+        col_count = len(headers)
+        widths = [self.content_width / col_count] * col_count
+        if col_count == 2:
+            widths = [self.content_width * 0.22, self.content_width * 0.78]
+        elif col_count == 3:
+            widths = [
+                self.content_width * 0.12,
+                self.content_width * 0.44,
+                self.content_width * 0.44,
+            ]
+
+        line_h = 6
+
+        def draw_row(cells: list[str], bold: bool = False) -> None:
+            style = "B" if bold else ""
+            self.set_font("Arial", style, 9)
+            if self.get_y() + line_h * 3 > self.h - 20:
+                self.add_page()
+            x0 = self.l_margin
+            y0 = self.get_y()
+            x = x0
+            max_h = line_h
+            for i, cell in enumerate(cells):
+                w = widths[i] if i < len(widths) else widths[-1]
+                self.set_xy(x, y0)
+                self.multi_cell(w, line_h, cell, border=1, align="L")
+                cell_h = self.get_y() - y0
+                max_h = max(max_h, cell_h)
+                x += w
+                self.set_xy(x, y0)
+            self.set_xy(x0, y0 + max_h)
+
+        draw_row(headers, bold=True)
+        for row in rows:
+            padded = row + [""] * (col_count - len(row))
+            draw_row(padded[:col_count])
+        self.ln(4)
 
 
-def centered_line(pdf: SRSReport, text: str, h: float = 8) -> None:
-    pdf.cell(0, h, text, align="C", new_x="LMARGIN", new_y="NEXT")
+def render_markdown(pdf: SRSPdf, lines: list[str]) -> None:
+    i = 0
+    paragraph_buf: list[str] = []
 
+    def flush_paragraph() -> None:
+        nonlocal paragraph_buf
+        if paragraph_buf:
+            pdf.paragraph(" ".join(paragraph_buf))
+            paragraph_buf = []
 
-def section_title(pdf: SRSReport, text: str) -> None:
-    pdf.set_font("Arial", "B", 14)
-    w = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.multi_cell(w, 8, text)
-    pdf.ln(2)
+    while i < len(lines):
+        line = lines[i]
+        stripped = line.strip()
 
+        if stripped in ("", "\\newpage"):
+            flush_paragraph()
+            i += 1
+            continue
 
-def body_text(pdf: SRSReport, text: str) -> None:
-    pdf.set_font("Arial", size=11)
-    w = pdf.w - pdf.l_margin - pdf.r_margin
-    pdf.multi_cell(w, 6, text)
-    pdf.ln(1)
+        if stripped == "---":
+            flush_paragraph()
+            i += 1
+            continue
 
+        if stripped.startswith("```"):
+            flush_paragraph()
+            lang = stripped[3:].strip() or "code"
+            block: list[str] = []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                block.append(lines[i])
+                i += 1
+            caption = None
+            if lang == "mermaid":
+                caption = "Диаграмма (Mermaid, см. также docs/uml/*.puml):"
+            pdf.code_block(block, caption=caption)
+            i += 1
+            continue
 
-def bullet_list(pdf: SRSReport, items: list[str]) -> None:
-    pdf.set_font("Arial", size=11)
-    w = pdf.w - pdf.l_margin - pdf.r_margin
-    for item in items:
-        pdf.multi_cell(w, 6, f"- {item}")
-    pdf.ln(2)
+        if stripped.startswith("#"):
+            flush_paragraph()
+            level = len(stripped) - len(stripped.lstrip("#"))
+            text = stripped[level:].strip()
+            if level <= 3:
+                pdf.heading(text, level)
+            else:
+                pdf.paragraph(text)
+            i += 1
+            continue
+
+        if stripped.startswith("|") and "|" in stripped[1:]:
+            flush_paragraph()
+            headers = parse_table_row(stripped)
+            i += 1
+            if i < len(lines) and is_table_separator(lines[i]):
+                i += 1
+            rows: list[list[str]] = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                rows.append(parse_table_row(lines[i]))
+                i += 1
+            pdf.table(headers, rows)
+            continue
+
+        if stripped.startswith("- "):
+            flush_paragraph()
+            pdf.bullet(stripped[2:])
+            i += 1
+            continue
+
+        if re.match(r"^\d+\.\s", stripped):
+            flush_paragraph()
+            pdf.bullet(stripped)
+            i += 1
+            continue
+
+        paragraph_buf.append(stripped)
+        i += 1
+
+    flush_paragraph()
 
 
 def main() -> None:
-    pdf = SRSReport()
-    pdf.set_auto_page_break(auto=True, margin=15)
-    font_regular = Path(r"C:\Windows\Fonts\arial.ttf")
-    font_bold = Path(r"C:\Windows\Fonts\arialbd.ttf")
-    if not font_regular.exists():
-        raise FileNotFoundError("Не найден Arial.ttf для кириллицы")
-    pdf.add_font("Arial", "", str(font_regular))
-    pdf.add_font("Arial", "B", str(font_bold))
+    raw = SRS_MD.read_text(encoding="utf-8").splitlines()
+    meta, body = parse_frontmatter(raw)
 
-    # Title page
+    title = meta.get("title", "Спецификация требований к программному обеспечению (SRS)")
+    subtitle = meta.get("subtitle", "Симулятор работы лифтов в здании")
+
+    pdf = SRSPdf()
+    pdf.title_page(title, subtitle)
     pdf.add_page()
-    pdf.ln(40)
-    pdf.set_font("Arial", "B", 18)
-    centered_line(pdf, "Спецификация требований к программному обеспечению (SRS)", 10)
-    pdf.ln(8)
-    pdf.set_font("Arial", "B", 16)
-    centered_line(pdf, "Симулятор работы лифтов в здании", 10)
-    pdf.ln(20)
-    pdf.set_font("Arial", size=12)
-    centered_line(pdf, f"Студент: {STUDENT_NAME}")
-    centered_line(pdf, f"Группа: {STUDENT_GROUP}")
-    pdf.ln(8)
-    centered_line(pdf, "Дисциплина: Программирование корпоративных систем")
-    centered_line(pdf, "2025-2026 уч. г.")
-
-    # 1. Introduction
-    pdf.add_page()
-    section_title(pdf, "1. Введение")
-    section_title(pdf, "1.1. Цель")
-    body_text(
-        pdf,
-        "Документ описывает требования к программному обеспечению «Симулятор работы лифтов "
-        "в здании» — многопоточной системе моделирования группы лифтов.",
-    )
-    section_title(pdf, "1.2. Область действия")
-    body_text(pdf, "В scope: моделирование здания, многопоточные лифты, диспетчер, консольный UI.")
-    body_text(pdf, "Вне scope: 3D-интерфейс, реальное оборудование, СУБД, сеть.")
-    section_title(pdf, "1.3. Определения")
-    bullet_list(
-        pdf,
-        [
-            "Hall Call — вызов с этажа (вверх/вниз)",
-            "Cabin Call — выбор этажа в кабине",
-            "Dispatcher — диспетчер вызовов",
-            "SRS — Software Requirements Specification",
-        ],
-    )
-
-    # 2. General description
-    section_title(pdf, "2. Общее описание")
-    section_title(pdf, "2.1. Описание продукта")
-    body_text(
-        pdf,
-        "Консольное приложение на C++17. Каждый лифт — отдельный поток. "
-        "Диспетчер в фоне распределяет вызовы по эвристическому алгоритму.",
-    )
-    section_title(pdf, "2.2. Функции продукта")
-    bullet_list(
-        pdf,
-        [
-            "Инициализация здания и лифтов",
-            "Приём вызовов с этажей и из кабины",
-            "Диспетчеризация и движение лифтов",
-            "Интерактивный и демо-режим",
-        ],
-    )
-    section_title(pdf, "2.3. Характеристики пользователей")
-    bullet_list(
-        pdf,
-        [
-            "Оператор/студент — запускает симуляцию, вводит команды",
-            "Разработчик — настраивает алгоритмы",
-            "Преподаватель — проверяет соответствие ТЗ",
-        ],
-    )
-
-    # 3. Detailed requirements
-    pdf.add_page()
-    section_title(pdf, "3. Детальные требования")
-    section_title(pdf, "3.1. Методология сбора")
-    bullet_list(
-        pdf,
-        [
-            "Анализ предметной области лифтовых систем",
-            "User Stories и Story Mapping",
-            "Классификация по иерархии Вигерса",
-        ],
-    )
-
-    section_title(pdf, "3.2. Бизнес-требования")
-    bullet_list(
-        pdf,
-        [
-            "BR-01: Снизить время ожидания за счёт диспетчеризации",
-            "BR-02: Безопасная имитация без реального оборудования",
-            "BR-03: Тестирование алгоритмов до внедрения",
-            "BR-04: Поддержка разного числа этажей и лифтов",
-        ],
-    )
-
-    section_title(pdf, "3.3. Пользовательские требования")
-    bullet_list(
-        pdf,
-        [
-            "UR-01: Вызов лифта вверх с этажа",
-            "UR-02: Вызов лифта вниз с этажа",
-            "UR-03: Выбор этажа в кабине",
-            "UR-04: Просмотр статуса лифтов",
-            "UR-05: Демо-режим",
-        ],
-    )
-
-    section_title(pdf, "3.4. Функциональные требования")
-    bullet_list(
-        pdf,
-        [
-            "FR-01: Здание с N этажами и M лифтами",
-            "FR-02–FR-03: Hall и Cabin вызовы",
-            "FR-04: Диспетчер назначает лифт",
-            "FR-05–FR-06: Движение и открытие дверей",
-            "FR-07–FR-08: Многопоточность лифтов и диспетчера",
-            "FR-09–FR-10: Интерактивный и demo режимы",
-        ],
-    )
-
-    section_title(pdf, "3.5. Нефункциональные требования")
-    bullet_list(
-        pdf,
-        [
-            "NFR-01: C++17",
-            "NFR-02: std::thread, mutex, condition_variable",
-            "NFR-04: Корректное завершение потоков",
-            "NFR-05: Сборка через CMake",
-        ],
-    )
-
-    # 4. UML
-    pdf.add_page()
-    section_title(pdf, "4. Диаграммы UML")
-    section_title(pdf, "4.1. Use Case Diagram")
-    body_text(pdf, "Акторы: Пассажир, Оператор.")
-    body_text(
-        pdf,
-        "Прецеденты: вызвать лифт вверх/вниз, выбрать этаж в кабине, "
-        "просмотреть статус, запустить демо, диспетчеризовать вызовы, перемещать лифт.",
-    )
-    body_text(pdf, "Связи: Пассажир → вызовы; Оператор → статус и демо; вызовы include диспетчеризацию.")
-
-    section_title(pdf, "4.2. Class Diagram")
-    body_text(pdf, "Основные классы: Simulator, Building, Elevator, Dispatcher, CallRequest.")
-    body_text(
-        pdf,
-        "Simulator агрегирует Building и Dispatcher. Building содержит коллекцию Elevator "
-        "и очередь CallRequest. Dispatcher использует Building для назначения вызовов.",
-    )
-
-    section_title(pdf, "4.3. Sequence Diagram — «Вызов с этажа»")
-    bullet_list(
-        pdf,
-        [
-            "Пассажир → Simulator: команда u 5",
-            "Simulator → Building: submit_call(HallUp, 5)",
-            "Dispatcher → Building: pop_next_call()",
-            "Dispatcher → Elevator: assign_hall_call()",
-            "Elevator: move_one_floor() в цикле, open_doors()",
-            "Elevator → Building: on_elevator_arrived()",
-            "Simulator → Пассажир: обновление статуса",
-        ],
-    )
-    body_text(pdf, "PlantUML-исходники: docs/uml/*.puml. Mermaid-версии: docs/SRS.md.")
+    render_markdown(pdf, body)
 
     pdf.output(str(OUTPUT))
-    print(f"Created: {OUTPUT}")
+    print(f"Создан: {OUTPUT}")
 
 
 if __name__ == "__main__":
